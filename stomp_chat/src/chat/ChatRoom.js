@@ -1,60 +1,61 @@
+// src/pages/ChatRoomPage.jsx
 import React, { useEffect, useRef, useState } from 'react';
 import SockJS from 'sockjs-client';
 import { Client } from '@stomp/stompjs';
+import { useParams } from 'react-router-dom';
 
 const ChatRoom = () => {
+  const { roomId } = useParams();
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState('');
-  const [connected, setConnected] = useState(false);
-  const clientRef = useRef(null);
+  const stompClientRef = useRef(null);
+  const subscriptionRef = useRef(null);
 
   useEffect(() => {
     const socket = new SockJS('http://localhost:8080/ws');
     const stompClient = new Client({
       webSocketFactory: () => socket,
-      reconnectDelay: 5000, // 자동 재연결 (선택)
+      debug: (str) => console.log('[STOMP DEBUG]', str),
       onConnect: () => {
-        console.log('✅ STOMP Connected!');
-        setConnected(true);
+        console.log('✅ STOMP 연결 성공');
 
-        stompClient.subscribe('/topic/chat', (message) => {
-          const body = JSON.parse(message.body);
-          setMessages((prev) => [...prev, body.content]);
+        // 기존 구독이 있으면 해제
+        subscriptionRef.current?.unsubscribe?.();
+
+        // 새로 구독
+        const subscription = stompClient.subscribe(`/topic/chat/${roomId}`, (msg) => {
+          const data = JSON.parse(msg.body);
+          setMessages((prev) => [...prev, data.content]);
         });
+
+        subscriptionRef.current = subscription;
       },
-      onDisconnect: () => {
-        console.log('❌ STOMP Disconnected');
-        setConnected(false);
-      },
-      debug: (str) => console.log('[DEBUG]', str),
     });
 
     stompClient.activate();
-    clientRef.current = stompClient;
+    stompClientRef.current = stompClient;
 
     return () => {
-      if (stompClient && stompClient.active) {
-        stompClient.deactivate();
-      }
+      console.log('🧹 연결 해제');
+      subscriptionRef.current?.unsubscribe?.();
+      stompClientRef.current?.deactivate();
     };
-  }, []); // ⭐ 반드시 빈 배열로 초기 1회만 실행
+  }, [roomId]);
 
   const sendMessage = () => {
-    const client = clientRef.current;
+    const client = stompClientRef.current;
     if (client && client.connected && input.trim() !== '') {
       client.publish({
         destination: '/app/chat',
-        body: JSON.stringify({ content: input }),
+        body: JSON.stringify({ content: input, roomId }),
       });
       setInput('');
-    } else {
-      console.warn('STOMP 연결 전이거나 입력이 비어 있음');
     }
   };
 
   return (
     <div style={{ padding: 20 }}>
-      <h2>💬 채팅방</h2>
+      <h2>🟢 채팅방 {roomId}</h2>
       <ul>
         {messages.map((msg, i) => (
           <li key={i}>{msg}</li>
@@ -65,11 +66,8 @@ const ChatRoom = () => {
         onChange={(e) => setInput(e.target.value)}
         onKeyDown={(e) => e.key === 'Enter' && sendMessage()}
         placeholder="메시지를 입력하세요"
-        style={{ width: '300px', marginRight: 10 }}
       />
-      <button onClick={sendMessage} disabled={!connected}>
-        전송
-      </button>
+      <button onClick={sendMessage}>전송</button>
     </div>
   );
 };
